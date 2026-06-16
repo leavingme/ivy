@@ -3,8 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 /**
  * Extract a single target Chinese character from natural-language speech.
  *
- * Uses MiniMax-M3 (or fallback to local rule-based extractor on failure).
- * Server-side only — API key never leaves the server.
+ * Uses MiniMax-M3. Server-side only — API key never leaves the server.
  *
  * POST /api/extract-char
  * Body: { text: string, alternatives?: string[] }
@@ -25,28 +24,9 @@ interface ExtractRequest {
 interface ExtractResponse {
   char: string | null
   confidence: number
-  source: 'llm' | 'rule' | 'fallback'
+  source: 'llm' | 'rule'
   /** echo the raw model output for debugging */
   raw?: string
-}
-
-/** Rule-based fallback used when LLM is unavailable or fails. */
-function extractSingleChar(text: string): string | null {
-  const deIdx = text.lastIndexOf('的')
-  if (deIdx >= 0) {
-    const after = text.slice(deIdx + 1).replace(/[的了呢啊吧嘛呢呀哦哈]/g, '').trim()
-    const cjkAfter = after.match(/[\u4e00-\u9fff]/)
-    if (cjkAfter) return cjkAfter[0]
-    return null
-  }
-  const cleaned = text
-    .replace(/(怎么写|字怎么写|字的笔顺|的笔顺|的写法|怎么读|怎么念|是什么意思|啥意思|是什么字|念什么|读什么|怎么念|怎么|呢|啊|吧|什么)/g, '')
-    .replace(/(帮我查|帮我看一下|我想知道|我想看|给我看看|我想学|那个字|这个字|查一下|查下|看一下|看看这个|看下|看一下|查一)/g, '')
-    .replace(/字$/g, '')
-    .replace(/[的了呢啊吧嘛呢呀哦哈]/g, '')
-    .trim()
-  const m = cleaned.match(/[\u4e00-\u9fff](?![\u4e00-\u9fff])/)
-  return m ? m[0] : null
 }
 
 export async function POST(req: NextRequest) {
@@ -71,12 +51,10 @@ export async function POST(req: NextRequest) {
   const baseUrl = process.env.MINIMAX_BASE_URL || 'https://api.minimaxi.com/v1'
   const model = process.env.MINIMAX_MODEL || 'MiniMax-M3'
 
-  // If no key configured, fall back to rules
   if (!apiKey) {
-    const char = extractSingleChar(text)
     return NextResponse.json<ExtractResponse>({
-      char,
-      confidence: char ? 0.5 : 0,
+      char: null,
+      confidence: 0,
       source: 'rule',
     })
   }
@@ -139,13 +117,12 @@ export async function POST(req: NextRequest) {
       raw: content.slice(0, 200),
     })
   } catch (err) {
-    // LLM failed — fall back to rule-based extraction
-    console.error('[extract-char] LLM failed, falling back to rule:', err)
-    const char = extractSingleChar(text)
+    // LLM failed — log and return null so caller can prompt user to retry
+    console.error('[extract-char] LLM failed:', err)
     return NextResponse.json<ExtractResponse>({
-      char,
-      confidence: char ? 0.5 : 0,
-      source: 'fallback',
+      char: null,
+      confidence: 0,
+      source: 'rule',
     })
   }
 }

@@ -7,31 +7,6 @@ interface VoiceButtonProps {
   size?: number
 }
 
-/**
- * Local rule-based fallback for single-character extraction. Used when
- * the /api/extract-char endpoint is unreachable or returns a null char.
- *
- * See app/api/extract-char/route.ts for the canonical implementation —
- * keep these in sync if you tweak one.
- */
-function extractSingleCharRule(text: string): string | null {
-  const deIdx = text.lastIndexOf('的')
-  if (deIdx >= 0) {
-    const after = text.slice(deIdx + 1).replace(/[的了呢啊吧嘛呢呀哦哈]/g, '').trim()
-    const cjkAfter = after.match(/[\u4e00-\u9fff]/)
-    if (cjkAfter) return cjkAfter[0]
-    return null
-  }
-  const cleaned = text
-    .replace(/(怎么写|字怎么写|字的笔顺|的笔顺|的写法|怎么读|怎么念|是什么意思|啥意思|是什么字|念什么|读什么|怎么念|怎么|呢|啊|吧|什么)/g, '')
-    .replace(/(帮我查|帮我看一下|我想知道|我想看|给我看看|我想学|那个字|这个字|查一下|查下|看一下|看看这个|看下|看一下|查一)/g, '')
-    .replace(/字$/g, '')
-    .replace(/[的了呢啊吧嘛呢呀哦哈]/g, '')
-    .trim()
-  const m = cleaned.match(/[\u4e00-\u9fff](?![\u4e00-\u9fff])/)
-  return m ? m[0] : null
-}
-
 /** Feature-detect Web Speech API (iPad Safari needs webkit prefix). */
 function getSpeechRecognition(): any {
   if (typeof window === 'undefined') return null
@@ -51,24 +26,19 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
   const supported = typeof window !== 'undefined' && !!getSpeechRecognition()
 
   /**
-   * Send ASR text to the server-side LLM extractor.
-   * Falls back to local rule-based extraction if the API fails.
+   * Send ASR text + alternatives to the server-side LLM extractor.
+   * Returns null if the API fails or can't identify a character.
    */
   async function extractChar(text: string, alternatives: string[] = []): Promise<string | null> {
-    try {
-      const res = await fetch('/api/extract-char', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, alternatives }),
-      })
-      if (!res.ok) throw new Error(`API ${res.status}`)
-      const data = await res.json()
-      if (data?.char && /[\u4e00-\u9fff]/.test(data.char)) return data.char
-      return null
-    } catch (err) {
-      console.warn('[VoiceButton] LLM extractor unavailable, using local rule:', err)
-      return extractSingleCharRule(text)
-    }
+    const res = await fetch('/api/extract-char', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, alternatives }),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    if (data?.char && /[\u4e00-\u9fff]/.test(data.char)) return data.char
+    return null
   }
 
   const start = () => {
