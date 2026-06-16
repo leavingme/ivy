@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+/* Anthropic Sans — body font (same CDN as leavingme.cn) */
+@font-face {
+  font-family: 'Anthropic Sans';
+  src: url('https://cdn.prod.website-files.com/67ce28cfec624e2b733f8a52/69971a00a3295036497e1a28_AnthropicSans-Roman-Web.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Anthropic Sans';
+  src: url('https://cdn.prod.website-files.com/67ce28cfec624e2b733f8a52/69971a016067bf14b9b8f48d_AnthropicSans-Italic-Web.woff2') format('woff2');
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@theme {
+  --color-background: #1a1a1a;
+  --color-foreground: #f0f0f0;
+  --color-muted: rgba(240, 240, 240, 0.6);
+  --color-accent: #fbbf24;          /* warm yellow — kid-friendly */
+  --color-accent-soft: rgba(251, 191, 36, 0.15);
+
+  --font-display: "Work Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-body: "Anthropic Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+
+  /* Subtle dot matrix — same as leavingme.cn */
+  --background-image-dot-pattern: radial-gradient(circle at center, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  --background-size-dot-pattern: 28px 28px;
+}
+
+@layer base {
+  html {
+    /* Disable text size adjustment on iOS rotate */
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-body);
+    font-size: 18px;
+    line-height: 1.65;
+    /* Prevent pull-to-refresh + overscroll bounce on iOS PWA */
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Use 100dvh to handle iOS address bar show/hide */
+  .full-height {
+    height: 100vh;
+    height: 100dvh;
+  }
+  .safe-top { padding-top: env(safe-area-inset-top); }
+  .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+/* Background dot pattern utility */
+.bg-dots {
+  background-image: var(--background-image-dot-pattern);
+  background-size: var(--background-size-dot-pattern);
+}
+
+/* Touch-friendly defaults */
+button, [role="button"] {
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Entry animation */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-entry { animation: fadeInUp 0.5s ease-out forwards; }
