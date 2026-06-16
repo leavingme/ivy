@@ -12,15 +12,9 @@ export const metadata: Metadata = {
     title: 'ivy 藤学',
   },
   formatDetection: { telephone: false },
-  icons: {
-    icon: [
-      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
-    ],
-    apple: [
-      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
-    ],
-  },
+  // Icons auto-discovered from app/icon.tsx — Next.js generates /icon
+  // (single source of truth). apple-touch-icon served from /icon too.
+  icons: undefined,
   manifest: '/manifest.webmanifest',
 }
 
