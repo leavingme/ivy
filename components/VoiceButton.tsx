@@ -8,27 +8,27 @@ interface VoiceButtonProps {
 }
 
 /**
- * Heuristic: extract a single Chinese character from natural speech.
+ * Local rule-based fallback for single-character extraction. Used when
+ * the /api/extract-char endpoint is unreachable or returns a null char.
  *
- * Examples:
- *   "愁字怎么写"  → "愁"
- *   "查想的笔顺" → "想"
- *   "我"          → "我"
- *   "藤字"        → "藤"
- *
- * If the cleaned result contains more than one CJK character, we return
- * the first one. Caller can decide whether to show "did you mean …".
+ * See app/api/extract-char/route.ts for the canonical implementation —
+ * keep these in sync if you tweak one.
  */
-function extractSingleChar(text: string): string | null {
-  // Strip common speech patterns
+function extractSingleCharRule(text: string): string | null {
+  const deIdx = text.lastIndexOf('的')
+  if (deIdx >= 0) {
+    const after = text.slice(deIdx + 1).replace(/[的了呢啊吧嘛呢呀哦哈]/g, '').trim()
+    const cjkAfter = after.match(/[\u4e00-\u9fff]/)
+    if (cjkAfter) return cjkAfter[0]
+    return null
+  }
   const cleaned = text
-    .replace(/(怎么写|字怎么写|字的笔顺|的笔顺|的写法|怎么读|怎么念|是什么意思|啥意思|是什么字|念什么|读什么|怎么念)/g, '')
-    .replace(/(帮我查|帮我看一下|我想知道|我想看|给我看看|我想学)/g, '')
+    .replace(/(怎么写|字怎么写|字的笔顺|的笔顺|的写法|怎么读|怎么念|是什么意思|啥意思|是什么字|念什么|读什么|怎么念|怎么|呢|啊|吧|什么)/g, '')
+    .replace(/(帮我查|帮我看一下|我想知道|我想看|给我看看|我想学|那个字|这个字|查一下|查下|看一下|看看这个|看下|看一下|查一)/g, '')
+    .replace(/字$/g, '')
     .replace(/[的了呢啊吧嘛呢呀哦哈]/g, '')
     .trim()
-
-  // Match first CJK Unified Ideograph
-  const m = cleaned.match(/[\u4e00-\u9fff]/)
+  const m = cleaned.match(/[\u4e00-\u9fff](?![\u4e00-\u9fff])/)
   return m ? m[0] : null
 }
 
@@ -50,6 +50,27 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
 
   const supported = typeof window !== 'undefined' && !!getSpeechRecognition()
 
+  /**
+   * Send ASR text to the server-side LLM extractor.
+   * Falls back to local rule-based extraction if the API fails.
+   */
+  async function extractChar(text: string, alternatives: string[] = []): Promise<string | null> {
+    try {
+      const res = await fetch('/api/extract-char', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, alternatives }),
+      })
+      if (!res.ok) throw new Error(`API ${res.status}`)
+      const data = await res.json()
+      if (data?.char && /[\u4e00-\u9fff]/.test(data.char)) return data.char
+      return null
+    } catch (err) {
+      console.warn('[VoiceButton] LLM extractor unavailable, using local rule:', err)
+      return extractSingleCharRule(text)
+    }
+  }
+
   const start = () => {
     setError(null)
     const SR = getSpeechRecognition()
@@ -62,26 +83,32 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
     recognition.lang = 'zh-CN'
     recognition.continuous = false
     recognition.interimResults = false
-    recognition.maxAlternatives = 3
+    recognition.maxAlternatives = 3   // pass to LLM for disambiguation
 
     recognition.onstart = () => {
       setState('listening')
       setTranscript('')
     }
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = async (event: any) => {
       const results = Array.from(event.results[0]) as Array<{ transcript: string }>
-      const texts = results.map((r) => r.transcript)
+      const texts = results.map((r) => r.transcript.trim())
       const top = texts[0]
       setTranscript(top)
       setState('thinking')
 
-      const char = extractSingleChar(top)
-      if (char) {
-        // Tiny delay so user sees the "thinking" state
-        setTimeout(() => router.push(`/?q=${encodeURIComponent(char)}`), 200)
-      } else {
-        setError(`没听清哪个字（听到："${top}"），再试一次？`)
+      try {
+        const char = await extractChar(top, texts)
+        if (char) {
+          // Tiny delay so user sees the "thinking" state
+          setTimeout(() => router.push(`/?q=${encodeURIComponent(char)}`), 150)
+        } else {
+          setError(`没听清哪个字（听到："${top}"），再试一次？`)
+          setState('idle')
+        }
+      } catch (err) {
+        console.error('[VoiceButton] extractChar failed:', err)
+        setError('提取失败，重试一下')
         setState('idle')
       }
     }

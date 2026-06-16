@@ -15,12 +15,15 @@ This folder is home. Treat it that way.
 ## First run
 
 ```bash
-npm install
-npm run build
-npm run dev    # localhost:3000
+cp .env.example .env.local   # add MINIMAX_API_KEY
+pnpm install
+pnpm run build
+pnpm run dev    # localhost:3000
 ```
 
-No `.env.local` needed in v0.1 — 全 Local First，零 API Key。
+`.env.local` requires **`MINIMAX_API_KEY`** (the LLM that powers `/api/extract-char`).
+Same value works for both `MINIMAX_API_KEY` (preferred) and `MINIMAX_CN_API_KEY` (alias).
+No `.env.local` = LLM calls fall back to local rule-based extraction (still works, less accurate).
 
 ## Every session
 
@@ -40,6 +43,8 @@ Project context intentionally **light** here — most decisions live in `/data/w
 
 ## Safety
 
-- **No backend in v0.1** — all state lives in localStorage / URL query / Service Worker cache. Don't add a database.
-- **No API keys** — voice is Web Speech API (browser-native) or iOS Shortcut (URL scheme). Don't introduce a paid ASR service.
+- **API keys stay server-side** — `MINIMAX_API_KEY` is read only in `app/api/*` route handlers, never in client components. Never `NEXT_PUBLIC_*` it.
+- **No database** — all user state lives in localStorage / URL query / Service Worker cache. Don't add a backend persistence layer.
+- **Voice privacy** — audio goes to Apple ASR (browser-native), never to our server. Only the ASR *text* (e.g. "讯字怎么写") hits our API, not the audio.
 - **PWA icon 隐私** — PWA 用 ivy 字母/logo，不要上传 Ivy 的真实照片到 public/。
+- **iPad-only PWA** — designed for iPad Safari PWA mode; not tested on Android/iPhone Chrome PWA.
