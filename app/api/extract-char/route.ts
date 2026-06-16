@@ -15,11 +15,7 @@ const SYSTEM_PROMPT = `从用户的话里提取他们想查的目标汉字。
 
 只返回 JSON: {"char": "讯", "confidence": 0.95}
 
-规则:
-- "X的Y" 取 Y
-- 比较句("哪个难写")默认取最后提到的字
-- 跳过"的/字/怎么"等辅助词
-- 完全无目标字时 char 返回空字符串`
+完全无目标字时 char 返回空字符串`
 
 interface ExtractRequest {
   text: string
@@ -51,6 +47,20 @@ function extractSingleChar(text: string): string | null {
     .trim()
   const m = cleaned.match(/[\u4e00-\u9fff](?![\u4e00-\u9fff])/)
   return m ? m[0] : null
+}
+
+/** Characters that look like CJK targets but are filler/grammatical — never what users want. */
+const STOPWORD_CHARS = new Set([
+  '的', '了', '是', '在', '和', '与', '或', '也', '都', '就',
+  '把', '被', '给', '让', '请', '要', '会', '能', '可以', '要',
+  '字', '怎', '么', '呢', '啊', '吧', '嘛', '呀', '哦', '哈',
+  '一', '个', '这', '那', '什', '什', '我', '你', '他', '她',
+])
+
+/** Post-process LLM output: drop stopword "characters" that should never be the answer. */
+function filterStopword(char: string | null): string | null {
+  if (!char) return null
+  return STOPWORD_CHARS.has(char) ? null : char
 }
 
 export async function POST(req: NextRequest) {
@@ -105,7 +115,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model,
         temperature: 0,
-        max_tokens: 200,
+        max_tokens: 500,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: userPrompt },
@@ -131,9 +141,11 @@ export async function POST(req: NextRequest) {
       if (m) parsed = JSON.parse(m[0])
     }
 
-    const char = typeof parsed.char === 'string' && /[\u4e00-\u9fff]/.test(parsed.char)
-      ? parsed.char
-      : null
+    const char = filterStopword(
+      typeof parsed.char === 'string' && /[\u4e00-\u9fff]/.test(parsed.char)
+        ? parsed.char
+        : null
+    )
 
     return NextResponse.json<ExtractResponse>({
       char,
