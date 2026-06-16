@@ -49,20 +49,6 @@ function extractSingleChar(text: string): string | null {
   return m ? m[0] : null
 }
 
-/** Characters that look like CJK targets but are filler/grammatical — never what users want. */
-const STOPWORD_CHARS = new Set([
-  '的', '了', '是', '在', '和', '与', '或', '也', '都', '就',
-  '把', '被', '给', '让', '请', '要', '会', '能', '可以', '要',
-  '字', '怎', '么', '呢', '啊', '吧', '嘛', '呀', '哦', '哈',
-  '一', '个', '这', '那', '什', '什', '我', '你', '他', '她',
-])
-
-/** Post-process LLM output: drop stopword "characters" that should never be the answer. */
-function filterStopword(char: string | null): string | null {
-  if (!char) return null
-  return STOPWORD_CHARS.has(char) ? null : char
-}
-
 export async function POST(req: NextRequest) {
   let body: ExtractRequest
   try {
@@ -141,11 +127,10 @@ export async function POST(req: NextRequest) {
       if (m) parsed = JSON.parse(m[0])
     }
 
-    const char = filterStopword(
+    const char =
       typeof parsed.char === 'string' && /[\u4e00-\u9fff]/.test(parsed.char)
         ? parsed.char
         : null
-    )
 
     return NextResponse.json<ExtractResponse>({
       char,
