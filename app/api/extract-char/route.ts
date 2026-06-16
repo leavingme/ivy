@@ -11,21 +11,15 @@ import { NextRequest, NextResponse } from 'next/server'
  * Returns: { char: string, confidence: number, source: 'llm' | 'rule' }
  */
 
-const SYSTEM_PROMPT = `你是"ivy 藤学"的语音理解助手。家长/小朋友说出一句话,你要从中提取出**目标汉字**(他们想查怎么写的那个字)。
+const SYSTEM_PROMPT = `从用户的话里提取他们想查的目标汉字。
 
-只返回 JSON,不要任何解释。格式:
-{"char": "讯", "confidence": 0.95}
+只返回 JSON: {"char": "讯", "confidence": 0.95}
 
 规则:
-1. "腾讯的讯" → char: "讯"(X的Y 模式,取 Y)
-2. "讯字怎么写" → char: "讯"(去掉"字怎么写"等后缀)
-3. "查讯" / "查一下讯" → char: "讯"
-4. "我想看讯字" → char: "讯"
-5. "腾讯的讯和腾" → char: "讯"(取最后一个提到的字)
-6. "腾和讯哪个难写" → char: "讯"(比较句式,默认取最后提到的字,不要返回 null)
-7. 如果句子里完全没有目标字(纯语气词/无法理解) → char: ""
-8. 不要选"的"、"字"、"怎么"等辅助词
-9. **必须返回 char 字段**。只在完全无目标字时才返回空字符串。`
+- "X的Y" 取 Y
+- 比较句("哪个难写")默认取最后提到的字
+- 跳过"的/字/怎么"等辅助词
+- 完全无目标字时 char 返回空字符串`
 
 interface ExtractRequest {
   text: string
