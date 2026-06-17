@@ -7,16 +7,16 @@ import { NextRequest, NextResponse } from 'next/server'
  *
  * POST /api/extract-char
  * Body: { text: string, alternatives?: string[] }
- * Returns: { char: string, confidence: number, source: 'llm' | 'rule' }
+ * Returns: { char: string | null, source: 'llm' | 'rule' }
  */
 
 const SYSTEM_PROMPT = `从用户的话里提取他们想查的目标汉字。
 
-只返回 JSON: {"char": "讯", "confidence": 0.95}
+只返回 JSON: {"char": "讯"}
 
 完全无目标字时 char 返回空字符串。
 
-注意: 输入来自语音识别,可能含错误(添字/丢字/换字)。需要进行纠正。`
+输入来自语音识别,可能有错别字。先结合上下文和汉语常识判断哪些字可能是 ASR 听错的,用最可能的正确字替代后再提取目标字。`
 
 interface ExtractRequest {
   text: string
@@ -25,7 +25,6 @@ interface ExtractRequest {
 
 interface ExtractResponse {
   char: string | null
-  confidence: number
   source: 'llm' | 'rule'
   /** echo the raw model output for debugging */
   raw?: string
@@ -43,21 +42,18 @@ export async function POST(req: NextRequest) {
   if (!text) {
     return NextResponse.json<ExtractResponse>({
       char: null,
-      confidence: 0,
       source: 'rule',
     })
   }
 
-  // Read API key — support both naming conventions
   // Read API key — primary DeepSeek, fallback MiniMax for legacy
   const apiKey = process.env.DEEPSEEK_API_KEY || process.env.MINIMAX_API_KEY || process.env.MINIMAX_CN_API_KEY
   const baseUrl = process.env.DEEPSEEK_BASE_URL || process.env.MINIMAX_BASE_URL || 'https://api.deepseek.com/v1'
-  const model = process.env.DEEPSEEK_MODEL || process.env.MINIMAX_MODEL || 'deepseek-chat'
+  const model = process.env.DEEPSEEK_MODEL || process.env.MINIMAX_MODEL || 'deepseek-v4-flash'
 
   if (!apiKey) {
     return NextResponse.json<ExtractResponse>({
       char: null,
-      confidence: 0,
       source: 'rule',
     })
   }
@@ -99,7 +95,7 @@ export async function POST(req: NextRequest) {
     const content = data.choices?.[0]?.message?.content ?? ''
 
     // Parse model JSON output
-    let parsed: { char?: string | null; confidence?: number } = {}
+    let parsed: { char?: string | null } = {}
     try {
       parsed = JSON.parse(content)
     } catch {
@@ -115,7 +111,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json<ExtractResponse>({
       char,
-      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0.9,
       source: 'llm',
       raw: content.slice(0, 200),
     })
@@ -124,7 +119,6 @@ export async function POST(req: NextRequest) {
     console.error('[extract-char] LLM failed:', err)
     return NextResponse.json<ExtractResponse>({
       char: null,
-      confidence: 0,
       source: 'rule',
     })
   }

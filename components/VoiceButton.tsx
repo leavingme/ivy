@@ -22,7 +22,7 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
   const [state, setState] = useState<'idle' | 'listening' | 'thinking' | 'unsupported'>('idle')
   const [transcript, setTranscript] = useState('')
   const [alternatives, setAlternatives] = useState<string[]>([])
-  const [selected, setSelected] = useState<{ char: string | null; confidence: number; source: string } | null>(null)
+  const [selected, setSelected] = useState<{ char: string | null; source: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const supported = typeof window !== 'undefined' && !!getSpeechRecognition()
@@ -31,22 +31,21 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
    * Send ASR text + alternatives to the server-side LLM extractor.
    * Returns null if the API fails or can't identify a character.
    */
-  async function extractChar(text: string, alternatives: string[] = []): Promise<{ char: string | null; confidence: number; source: string }> {
+  async function extractChar(text: string, alternatives: string[] = []): Promise<{ char: string | null; source: string }> {
     try {
       const res = await fetch('/api/extract-char', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, alternatives }),
       })
-      if (!res.ok) return { char: null, confidence: 0, source: 'error' }
+      if (!res.ok) return { char: null, source: 'error' }
       const data = await res.json()
       return {
         char: data?.char && /[\u4e00-\u9fff]/.test(data.char) ? data.char : null,
-        confidence: data?.confidence ?? 0,
         source: data?.source ?? 'unknown',
       }
     } catch {
-      return { char: null, confidence: 0, source: 'fetch-error' }
+      return { char: null, source: 'fetch-error' }
     }
   }
 
@@ -194,7 +193,7 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
               <span className={selected.char ? 'text-accent' : 'text-red-300'}>
                 {selected.char ?? 'null'}
               </span>
-              <span className="text-white/40"> (conf {selected.confidence.toFixed(2)}, {selected.source})</span>
+              <span className="text-white/40"> ({selected.source})</span>
             </div>
           )}
         </div>
