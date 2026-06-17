@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 /**
  * Extract a single target Chinese character from natural-language speech.
  *
- * Uses MiniMax-M3. Server-side only — API key never leaves the server.
+ * Uses DeepSeek (or legacy MiniMax-M3). Server-side only — API key never leaves the server.
  *
  * POST /api/extract-char
  * Body: { text: string, alternatives?: string[] }
@@ -49,9 +49,10 @@ export async function POST(req: NextRequest) {
   }
 
   // Read API key — support both naming conventions
-  const apiKey = process.env.MINIMAX_API_KEY || process.env.MINIMAX_CN_API_KEY
-  const baseUrl = process.env.MINIMAX_BASE_URL || 'https://api.minimaxi.com/v1'
-  const model = process.env.MINIMAX_MODEL || 'MiniMax-M3'
+  // Read API key — primary DeepSeek, fallback MiniMax for legacy
+  const apiKey = process.env.DEEPSEEK_API_KEY || process.env.MINIMAX_API_KEY || process.env.MINIMAX_CN_API_KEY
+  const baseUrl = process.env.DEEPSEEK_BASE_URL || process.env.MINIMAX_BASE_URL || 'https://api.deepseek.com/v1'
+  const model = process.env.DEEPSEEK_MODEL || process.env.MINIMAX_MODEL || 'deepseek-chat'
 
   if (!apiKey) {
     return NextResponse.json<ExtractResponse>({
