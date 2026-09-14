@@ -74,3 +74,85 @@ button, [role="button"] {
   to { opacity: 1; transform: translateY(0); }
 }
 .animate-entry { animation: fadeInUp 0.5s ease-out forwards; }
+
+@keyframes gardenFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.garden-float { animation: gardenFloat 4.5s ease-in-out infinite; }
+
+@keyframes gardenSway {
+  0%, 100% { transform: rotate(-1.5deg); }
+  50% { transform: rotate(1.5deg); }
+}
+.garden-sway { animation: gardenSway 4.8s ease-in-out infinite; transform-origin: 50% 100%; }
+
+@keyframes gardenShimmer {
+  0%, 100% { opacity: 0.45; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+.garden-shimmer { animation: gardenShimmer 2.8s ease-in-out infinite; transform-origin: center; }
+
+@keyframes gardenBob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(5px); }
+}
+.garden-bob { animation: gardenBob 3.8s ease-in-out infinite; }
+
+@keyframes gardenStationDrift {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+.garden-station {
+  animation: gardenStationDrift 6.2s ease-in-out infinite;
+  will-change: transform;
+}
+.garden-station:focus-visible {
+  border-radius: 24px;
+  outline: 4px solid rgba(255, 248, 221, 0.92);
+  outline-offset: 6px;
+}
+
+@keyframes gardenSparkle {
+  0%, 100% { opacity: 0.55; transform: scale(0.96); }
+  50% { opacity: 1; transform: scale(1.08); }
+}
+.garden-sparkle {
+  animation: gardenSparkle 3.2s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes gardenFlowerNod {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50% { transform: translateY(-5px) rotate(1deg); }
+}
+.garden-flower-link {
+  animation: gardenFlowerNod 4.8s ease-in-out infinite;
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+.garden-flower-link:focus-visible {
+  outline: 4px solid rgba(255, 248, 221, 0.96);
+  outline-offset: 5px;
+}
+
+.garden-voice .text-muted {
+  color: rgba(48, 88, 45, 0.82) !important;
+  font-weight: 700;
+  margin-top: -0.5rem;
+  text-shadow: 0 1px 0 rgba(255, 248, 221, 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-entry,
+  .garden-bob,
+  .garden-float,
+  .garden-flower-link,
+  .garden-shimmer,
+  .garden-sparkle,
+  .garden-station,
+  .garden-sway {
+    animation: none !important;
+  }
+}

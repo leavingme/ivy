@@ -15,15 +15,22 @@ This folder is home. Treat it that way.
 ## First run
 
 ```bash
-cp .env.example .env.local   # add MINIMAX_API_KEY
+cp .env.example .env.local   # add LLM_API_KEY
 pnpm install
 pnpm run build
 pnpm run dev    # localhost:3000
 ```
 
-`.env.local` requires **`MINIMAX_API_KEY`** (the LLM that powers `/api/extract-char`).
-Same value works for both `MINIMAX_API_KEY` (preferred) and `MINIMAX_CN_API_KEY` (alias).
-No `.env.local` = LLM calls fall back to local rule-based extraction (still works, less accurate).
+`.env.local` requires **`LLM_API_KEY`** — the key for `/api/extract-char`, plus `LLM_MODEL`
+(`deepseek-flash` or `MiniMax-M3`; the model name also picks the base URL).
+No `.env.local` = the route returns `null` and the client asks the user to retry.
+
+Both vendors are called through the OpenAI SDK's **Responses API**, so request/response
+shapes are identical — the only per-vendor difference (how to turn thinking off) is
+isolated in `PROFILES` / `REASONING` in `app/api/extract-char/route.ts`.
+Structured output uses a **forced tool call**, the one mechanism both vendors honor.
+
+MiniMax docs: <https://platform.minimax.cn/docs> (index at `/docs/llms.txt`; append `.md` to any page for raw Markdown). Local cheat sheet: `~/.claude/skills/minimax-platform/`.
 
 ## Every session
 

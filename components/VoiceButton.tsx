@@ -1,10 +1,11 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 interface VoiceButtonProps {
   size?: number
+  variant?: 'microphone' | 'morning-glory'
 }
 
 /** Feature-detect Web Speech API (iPad Safari needs webkit prefix). */
@@ -17,12 +18,81 @@ function getSpeechRecognition(): any {
   )
 }
 
-export function VoiceButton({ size = 200 }: VoiceButtonProps) {
+function MorningGloryIcon({ active }: { active: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 160 160"
+      role="img"
+      className={`h-full w-full drop-shadow-[0_14px_18px_rgba(47,93,54,0.22)] ${active ? 'animate-pulse' : ''}`}
+    >
+      <defs>
+        <radialGradient id="morningGloryBloom" cx="50%" cy="46%" r="54%">
+          <stop offset="0" stopColor="#fff7c7" />
+          <stop offset="0.32" stopColor="#f7b6cf" />
+          <stop offset="0.68" stopColor="#8e8de8" />
+          <stop offset="1" stopColor="#5867c9" />
+        </radialGradient>
+        <linearGradient id="morningGloryStem" x1="0" x2="1" y1="0" y2="1">
+          <stop offset="0" stopColor="#78c76b" />
+          <stop offset="1" stopColor="#2f7c48" />
+        </linearGradient>
+      </defs>
+      <path
+        d="M80 87c-10 18-11 36-4 55"
+        fill="none"
+        stroke="url(#morningGloryStem)"
+        strokeWidth="9"
+        strokeLinecap="round"
+      />
+      <path
+        d="M75 123c-21-16-41-16-60 0 22 15 42 15 60 0Z"
+        fill="#65b957"
+      />
+      <path
+        d="M88 127c22-19 44-20 66-2-24 17-46 18-66 2Z"
+        fill="#82cf62"
+      />
+      <path
+        d="M37 34c13-20 30-24 43-8 13-16 31-12 43 8 22 4 28 20 13 38 7 23-8 36-32 30-13 17-35 17-48 0-24 6-39-7-32-30-15-18-9-34 13-38Z"
+        fill="url(#morningGloryBloom)"
+      />
+      <path
+        d="M46 42c20 9 32 22 34 40M114 42c-20 9-32 22-34 40M80 25v57M34 69c20-4 35 0 46 13M126 69c-20-4-35 0-46 13"
+        fill="none"
+        stroke="#fff8d5"
+        strokeWidth="5"
+        strokeLinecap="round"
+        opacity=".75"
+      />
+      <circle cx="80" cy="82" r="19" fill="#fff4a6" />
+      <path
+        d="M66 83c8 8 19 8 28 0"
+        fill="none"
+        stroke="#d88838"
+        strokeWidth="5"
+        strokeLinecap="round"
+      />
+      {active && (
+        <g fill="none" stroke="#fff8c9" strokeLinecap="round" strokeWidth="5" opacity=".9">
+          <path d="M34 21c-10-9-20-11-29-4" />
+          <path d="M126 21c10-9 20-11 29-4" />
+        </g>
+      )}
+    </svg>
+  )
+}
+
+export function VoiceButton({ size = 200, variant = 'microphone' }: VoiceButtonProps) {
   const router = useRouter()
+  const recognitionRef = useRef<any>(null)
   const [state, setState] = useState<'idle' | 'listening' | 'thinking' | 'unsupported'>('idle')
   const [transcript, setTranscript] = useState('')
   const [alternatives, setAlternatives] = useState<string[]>([])
-  const [selected, setSelected] = useState<{ char: string | null; source: string } | null>(null)
+  const [selected, setSelected] = useState<{
+    char: string | null
+    candidates: string[]
+    source: string
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const supported = typeof window !== 'undefined' && !!getSpeechRecognition()
@@ -31,25 +101,37 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
    * Send ASR text + alternatives to the server-side LLM extractor.
    * Returns null if the API fails or can't identify a character.
    */
-  async function extractChar(text: string, alternatives: string[] = []): Promise<{ char: string | null; source: string }> {
+  async function extractChar(text: string, alternatives: string[] = []): Promise<{
+    char: string | null
+    candidates: string[]
+    source: string
+  }> {
     try {
       const res = await fetch('/api/extract-char', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, alternatives }),
       })
-      if (!res.ok) return { char: null, source: 'error' }
+      if (!res.ok) return { char: null, candidates: [], source: 'error' }
       const data = await res.json()
       return {
         char: data?.char && /[\u4e00-\u9fff]/.test(data.char) ? data.char : null,
+        candidates: Array.isArray(data?.candidates)
+          ? data.candidates.filter((c: unknown) => typeof c === 'string' && /[\u4e00-\u9fff]/.test(c))
+          : [],
         source: data?.source ?? 'unknown',
       }
     } catch {
-      return { char: null, source: 'fetch-error' }
+      return { char: null, candidates: [], source: 'fetch-error' }
     }
   }
 
   const start = () => {
+    if (state === 'listening') {
+      recognitionRef.current?.stop()
+      return
+    }
+
     setError(null)
     setAlternatives([])
     setSelected(null)
@@ -60,6 +142,7 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
     }
 
     const recognition = new SR()
+    recognitionRef.current = recognition
     recognition.lang = 'zh-CN'
     recognition.continuous = false
     recognition.interimResults = false
@@ -80,10 +163,9 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
 
       const result = await extractChar(top, texts)
       setSelected(result)
-      if (result.char) {
-        // Delay navigation so user can read debug panel before page changes
-        setTimeout(() => router.push(`/?q=${encodeURIComponent(result.char!)}`), 3000)
-      } else {
+      if (result.char && result.candidates.length === 0) {
+        router.push(`/?q=${encodeURIComponent(result.char)}`)
+      } else if (!result.char) {
         setError(`没听清哪个字（听到："${top}"），再试一次？`)
         setState('idle')
       }
@@ -102,7 +184,8 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
     }
 
     recognition.onend = () => {
-      if (state === 'listening') setState('idle')
+      recognitionRef.current = null
+      setState((current) => (current === 'listening' ? 'idle' : current))
     }
 
     try {
@@ -131,16 +214,29 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
     <div className="flex flex-col items-center gap-4">
       <button
         onClick={start}
-        disabled={state === 'listening' || state === 'thinking'}
-        className={`relative flex items-center justify-center rounded-full transition-all active:scale-95 ${
-          state === 'listening'
-            ? 'bg-red-500/20 ring-4 ring-red-500/40 animate-pulse'
-            : 'bg-accent/15 ring-2 ring-accent/40 hover:bg-accent/25'
+        disabled={state === 'thinking'}
+        className={`relative flex items-center justify-center transition-all active:scale-95 ${
+          variant === 'morning-glory'
+            ? 'rounded-[42%] bg-transparent hover:scale-105 disabled:opacity-95'
+            : `rounded-full ${
+                state === 'listening'
+                  ? 'bg-red-500/20 ring-4 ring-red-500/40 animate-pulse'
+                  : 'bg-accent/15 ring-2 ring-accent/40 hover:bg-accent/25'
+              }`
         }`}
         style={{ width: size, height: size }}
-        aria-label="按住说话查字"
+        aria-label={variant === 'morning-glory' ? '点击喇叭花说字' : '按住说话查字'}
       >
-        {state === 'listening' ? (
+        {variant === 'morning-glory' ? (
+          <div className="relative h-full w-full">
+            <MorningGloryIcon active={state === 'listening' || state === 'thinking'} />
+            {state === 'thinking' && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="h-10 w-10 animate-spin rounded-full border-4 border-white/80 border-t-[#5d66d4]" />
+              </div>
+            )}
+          </div>
+        ) : state === 'listening' ? (
           <div className="flex flex-col items-center gap-2">
             <div className="h-12 w-12 rounded-full bg-red-500" />
             <span className="text-sm font-medium">听到了…</span>
@@ -159,14 +255,37 @@ export function VoiceButton({ size = 200 }: VoiceButtonProps) {
         )}
       </button>
 
-      <p className="text-sm text-muted">
-        {state === 'idle' && '点一下，说一个字'}
-        {state === 'listening' && '说话中…'}
-        {state === 'thinking' && '正在识别…'}
-      </p>
+      {variant === 'microphone' && (
+        <p className="text-sm text-muted">
+          {state === 'idle' && '点一下，说一个字'}
+          {state === 'listening' && '说话中…'}
+          {state === 'thinking' && '正在识别…'}
+        </p>
+      )}
 
       {error && (
         <p className="rounded-lg bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</p>
+      )}
+
+      {selected && selected.candidates.length > 0 && (
+        <div className="w-full max-w-md rounded-lg border border-accent/30 bg-white/75 p-4 text-center text-[#24412e] shadow-sm">
+          <p className="text-sm font-bold">你想查哪个字？</p>
+          <div className="mt-3 flex flex-wrap justify-center gap-2">
+            {[selected.char, ...selected.candidates]
+              .filter((char): char is string => Boolean(char))
+              .filter((char, index, chars) => chars.indexOf(char) === index)
+              .map((char) => (
+                <button
+                  key={char}
+                  onClick={() => router.push(`/?q=${encodeURIComponent(char)}`)}
+                  className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-[#75b667] bg-[#fff8dd] font-display text-3xl font-black text-[#2a5637] transition hover:-translate-y-0.5 active:scale-95"
+                  aria-label={`查询${char}字`}
+                >
+                  {char}
+                </button>
+              ))}
+          </div>
+        </div>
       )}
 
       {/* Debug panel: shows ASR alternatives + LLM extraction result */}

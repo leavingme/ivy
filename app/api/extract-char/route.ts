@@ -1,22 +1,66 @@
 import { NextRequest, NextResponse } from 'next/server'
+import OpenAI from 'openai'
+import type { ReasoningEffort } from 'openai/resources/shared'
 
 /**
  * Extract a single target Chinese character from natural-language speech.
  *
- * Uses DeepSeek (or legacy MiniMax-M3). Server-side only — API key never leaves the server.
+ * Both DeepSeek and MiniMax go through the OpenAI SDK's Responses API so the
+ * request/response shape is identical. The only per-vendor difference —
+ * how to turn thinking off — lives in PROFILES below.
  *
  * POST /api/extract-char
  * Body: { text: string, alternatives?: string[] }
- * Returns: { char: string | null, source: 'llm' | 'rule' }
+ * Returns: { char, confidence, candidates, source }
  */
+
+/**
+ * Always pass the effort explicitly. DeepSeek and MiniMax have different
+ * vendor defaults, so relying on either default makes the two profiles diverge.
+ * With high reasoning, use tool_choice: auto; DeepSeek rejects a forced named
+ * tool while thinking is enabled.
+ */
+const REASONING: { effort: ReasoningEffort } = { effort: 'high' }
+
+const PROFILES: Record<string, { baseURL: string; apiKeyEnv: string }> = {
+  deepseek: { baseURL: 'https://api.deepseek.com', apiKeyEnv: 'DEEPSEEK_API_KEY' },
+  minimax: { baseURL: 'https://api.minimaxi.com/v1', apiKeyEnv: 'MINIMAX_CN_API_KEY' },
+}
 
 const SYSTEM_PROMPT = `从用户的话里提取他们想查的目标汉字。
 
-只返回 JSON: {"char": "讯"}
+输入来自语音识别,可能有错别字。判断办法:看 "X的Y字怎么写" 里的 X 是不是真实存在的词,不是就换成最可能的真词,再取出目标字。
+- "善长的善字怎么写" -> "擅长" -> 擅
+- "纯天的纯字怎么写" -> "春天" -> 春
+- "准备的被字怎么写" -> "准备" -> 备
+X 本身就是词时不要改。
 
-完全无目标字时 char 返回空字符串。
+完全无目标字时 char 返回空字符串。`
 
-输入来自语音识别,可能有错别字。先结合上下文和汉语常识判断哪些字可能是 ASR 听错的,用最可能的正确字替代后再提取目标字。`
+/** Forced tool call — the only structured-output mechanism both vendors honor. */
+const EXTRACT_TOOL = {
+  type: 'function' as const,
+  name: 'emit',
+  description: '输出抽取到的目标汉字',
+  strict: true,
+  parameters: {
+    type: 'object',
+    properties: {
+      char: {
+        type: 'string',
+        description: '最可能的目标汉字,单个汉字;无目标字时为空字符串',
+      },
+      confidence: { type: 'number', description: '0 到 1,该字是目标字的可能性' },
+      candidates: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '其它同音/近音的可能字,按可能性排序,最多 5 个',
+      },
+    },
+    required: ['char', 'confidence', 'candidates'],
+    additionalProperties: false,
+  },
+}
 
 interface ExtractRequest {
   text: string
@@ -25,9 +69,38 @@ interface ExtractRequest {
 
 interface ExtractResponse {
   char: string | null
+  /** 0-1; null when the LLM was not reached */
+  confidence: number | null
+  /** other plausible characters, for tap-to-correct */
+  candidates: string[]
   source: 'llm' | 'rule'
-  /** echo the raw model output for debugging */
-  raw?: string
+}
+
+const CJK = /[一-鿿]/
+
+function empty(source: 'llm' | 'rule'): ExtractResponse {
+  return { char: null, confidence: null, candidates: [], source }
+}
+
+interface ParsedExtraction {
+  char?: string | null
+  confidence?: number
+  candidates?: string[]
+}
+
+function parseTextExtraction(text: string): ParsedExtraction | null {
+  const clean = text.replace(/```(?:json)?/g, '').trim()
+  try {
+    return JSON.parse(clean) as ParsedExtraction
+  } catch {
+    const match = clean.match(/\{[\s\S]*\}/)
+    if (!match) return null
+    try {
+      return JSON.parse(match[0]) as ParsedExtraction
+    } catch {
+      return null
+    }
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -39,88 +112,67 @@ export async function POST(req: NextRequest) {
   }
 
   const text = (body.text ?? '').trim()
-  if (!text) {
-    return NextResponse.json<ExtractResponse>({
-      char: null,
-      source: 'rule',
-    })
-  }
+  if (!text) return NextResponse.json(empty('rule'))
 
-  // Read API key — primary DeepSeek, fallback MiniMax for legacy
-  const apiKey = process.env.DEEPSEEK_API_KEY || process.env.MINIMAX_API_KEY || process.env.MINIMAX_CN_API_KEY
-  const baseUrl = process.env.DEEPSEEK_BASE_URL || process.env.MINIMAX_BASE_URL || 'https://api.deepseek.com/v1'
-  const model = process.env.DEEPSEEK_MODEL || process.env.MINIMAX_MODEL || 'deepseek-v4-flash'
+  const model = process.env.LLM_MODEL || 'deepseek-flash'
+  const profile = PROFILES[model.toLowerCase().includes('minimax') ? 'minimax' : 'deepseek']
+  const apiKey = process.env.LLM_API_KEY || process.env[profile.apiKeyEnv]
 
   if (!apiKey) {
-    return NextResponse.json<ExtractResponse>({
-      char: null,
-      source: 'rule',
-    })
+    console.error('[extract-char] no API key set')
+    return NextResponse.json(empty('rule'))
   }
 
-  // Build user prompt — include alternatives if available
-  const altText = body.alternatives && body.alternatives.length > 0
-    ? `\n候选 ASR 结果(选最可能正确的):\n${body.alternatives.map((a, i) => `  ${i + 1}. ${a}`).join('\n')}`
-    : ''
+  const client = new OpenAI({
+    apiKey,
+    baseURL: process.env.LLM_BASE_URL || profile.baseURL,
+    timeout: 8000, // a hung LLM would otherwise freeze the button on "thinking"
+    maxRetries: 1, // MiniMax returns 529 overloaded_error under load
+  })
 
-  const userPrompt = `用户说的话(可能含 ASR 错误):
-"""${text}"""${altText}
-
-提取目标汉字,只返回 JSON:`
+  // Feed ASR alternatives so the model can pick a better reading than top-1
+  const altText =
+    body.alternatives && body.alternatives.length > 1
+      ? `\n\n其它语音识别候选(选最可能正确的):\n${body.alternatives.map((a, i) => `  ${i + 1}. ${a}`).join('\n')}`
+      : ''
 
   try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        max_tokens: 500,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userPrompt },
-        ],
-        response_format: { type: 'json_object' },
-      }),
+    const response = await client.responses.create({
+      model,
+      instructions: SYSTEM_PROMPT,
+      input: `用户说的话(可能含 ASR 错误):\n"""${text}"""${altText}`,
+      reasoning: REASONING,
+      max_output_tokens: 2000,
+      tools: [EXTRACT_TOOL],
+      tool_choice: 'auto',
     })
 
-    if (!response.ok) {
-      throw new Error(`LLM ${response.status}: ${await response.text().catch(() => '')}`)
+    // Prefer the structured tool result; reasoning mode may return text JSON instead.
+    const call = response.output.find((o) => o.type === 'function_call')
+    const parsed = call
+      ? (JSON.parse(call.arguments) as ParsedExtraction)
+      : parseTextExtraction(response.output_text)
+
+    if (!parsed) {
+      console.error('[extract-char] no structured extraction in output:', response.output.map((o) => o.type))
+      return NextResponse.json(empty('llm'))
     }
 
-    const data = await response.json()
-    const content = data.choices?.[0]?.message?.content ?? ''
-
-    // Parse model JSON output
-    let parsed: { char?: string | null } = {}
-    try {
-      parsed = JSON.parse(content)
-    } catch {
-      // Try to extract JSON from a possibly noisy response
-      const m = content.match(/\{[\s\S]*\}/)
-      if (m) parsed = JSON.parse(m[0])
-    }
-
-    const char =
-      typeof parsed.char === 'string' && /[\u4e00-\u9fff]/.test(parsed.char)
-        ? parsed.char
-        : null
+    const char = typeof parsed.char === 'string' && CJK.test(parsed.char) ? parsed.char : null
+    const candidates = Array.isArray(parsed.candidates)
+      ? parsed.candidates.filter((c) => typeof c === 'string' && CJK.test(c) && c !== char).slice(0, 5)
+      : []
 
     return NextResponse.json<ExtractResponse>({
       char,
+      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : null,
+      candidates,
       source: 'llm',
-      raw: content.slice(0, 200),
     })
   } catch (err) {
-    // LLM failed — log and return null so caller can prompt user to retry
+    // LLM failed — caller prompts the user to retry
     console.error('[extract-char] LLM failed:', err)
-    return NextResponse.json<ExtractResponse>({
-      char: null,
-      source: 'rule',
-    })
+    return NextResponse.json(empty('rule'))
   }
 }
 
