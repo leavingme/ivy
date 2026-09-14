@@ -89,8 +89,7 @@ export function VoiceButton({ size = 200, variant = 'microphone' }: VoiceButtonP
   const [transcript, setTranscript] = useState('')
   const [alternatives, setAlternatives] = useState<string[]>([])
   const [selected, setSelected] = useState<{
-    char: string | null
-    candidates: string[]
+    candidates: Array<{ char: string; confidence: number | null }>
     source: string
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -102,8 +101,7 @@ export function VoiceButton({ size = 200, variant = 'microphone' }: VoiceButtonP
    * Returns null if the API fails or can't identify a character.
    */
   async function extractChar(text: string, alternatives: string[] = []): Promise<{
-    char: string | null
-    candidates: string[]
+    candidates: Array<{ char: string; confidence: number | null }>
     source: string
   }> {
     try {
@@ -112,17 +110,17 @@ export function VoiceButton({ size = 200, variant = 'microphone' }: VoiceButtonP
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, alternatives }),
       })
-      if (!res.ok) return { char: null, candidates: [], source: 'error' }
+      if (!res.ok) return { candidates: [], source: 'error' }
       const data = await res.json()
       return {
-        char: data?.char && /[\u4e00-\u9fff]/.test(data.char) ? data.char : null,
         candidates: Array.isArray(data?.candidates)
-          ? data.candidates.filter((c: unknown) => typeof c === 'string' && /[\u4e00-\u9fff]/.test(c))
+          ? data.candidates.filter((candidate: unknown): candidate is { char: string; confidence: number | null } =>
+              typeof candidate === 'object' && candidate !== null && typeof (candidate as { char?: unknown }).char === 'string')
           : [],
         source: data?.source ?? 'unknown',
       }
     } catch {
-      return { char: null, candidates: [], source: 'fetch-error' }
+      return { candidates: [], source: 'fetch-error' }
     }
   }
 
@@ -163,9 +161,9 @@ export function VoiceButton({ size = 200, variant = 'microphone' }: VoiceButtonP
 
       const result = await extractChar(top, texts)
       setSelected(result)
-      if (result.char && result.candidates.length === 0) {
-        router.push(`/?q=${encodeURIComponent(result.char)}`)
-      } else if (!result.char) {
+      if (result.candidates.length === 1) {
+        router.push(`/?q=${encodeURIComponent(result.candidates[0].char)}`)
+      } else if (result.candidates.length === 0) {
         setError(`没听清哪个字（听到："${top}"），再试一次？`)
         setState('idle')
       }
@@ -257,7 +255,7 @@ export function VoiceButton({ size = 200, variant = 'microphone' }: VoiceButtonP
 
       {variant === 'microphone' && (
         <p className="text-sm text-muted">
-          {state === 'idle' && '点一下，说一个字'}
+          {state === 'idle' && '点一下，说「灵犀的犀怎么写」'}
           {state === 'listening' && '说话中…'}
           {state === 'thinking' && '正在识别…'}
         </p>
@@ -271,8 +269,8 @@ export function VoiceButton({ size = 200, variant = 'microphone' }: VoiceButtonP
         <div className="w-full max-w-md rounded-lg border border-accent/30 bg-white/75 p-4 text-center text-[#24412e] shadow-sm">
           <p className="text-sm font-bold">你想查哪个字？</p>
           <div className="mt-3 flex flex-wrap justify-center gap-2">
-            {[selected.char, ...selected.candidates]
-              .filter((char): char is string => Boolean(char))
+            {[...selected.candidates]
+              .map((candidate) => candidate.char)
               .filter((char, index, chars) => chars.indexOf(char) === index)
               .map((char) => (
                 <button
@@ -281,7 +279,10 @@ export function VoiceButton({ size = 200, variant = 'microphone' }: VoiceButtonP
                   className="flex h-14 w-14 items-center justify-center rounded-xl border-2 border-[#75b667] bg-[#fff8dd] font-display text-3xl font-black text-[#2a5637] transition hover:-translate-y-0.5 active:scale-95"
                   aria-label={`查询${char}字`}
                 >
-                  {char}
+                  <span className="font-display text-3xl font-black">{char}</span>
+                  <span className="mt-1 text-xs text-muted/70">
+                    置信度：{Math.round((selected.candidates.find((candidate) => candidate.char === char)?.confidence ?? 0) * 100)}%
+                  </span>
                 </button>
               ))}
           </div>
@@ -309,8 +310,8 @@ export function VoiceButton({ size = 200, variant = 'microphone' }: VoiceButtonP
           {selected && (
             <div className="border-t border-white/10 pt-2 text-white/70">
               <span className="text-white/50">LLM → </span>
-              <span className={selected.char ? 'text-accent' : 'text-red-300'}>
-                {selected.char ?? 'null'}
+              <span className={selected.candidates[0]?.char ? 'text-accent' : 'text-red-300'}>
+                {selected.candidates[0]?.char ?? 'null'}
               </span>
               <span className="text-white/40"> ({selected.source})</span>
             </div>

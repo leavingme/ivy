@@ -37,30 +37,25 @@ X 本身就是词时不要改。
 
 完全无目标字时 char 返回空字符串。`
 
-/** Forced tool call — the only structured-output mechanism both vendors honor. */
 const EXTRACT_TOOL = {
   type: 'function' as const,
   name: 'emit',
-  description: '输出抽取到的目标汉字',
+  description: '按置信度从高到低输出目标汉字候选',
   strict: true,
   parameters: {
-    type: 'object',
-    properties: {
-      char: {
-        type: 'string',
-        description: '最可能的目标汉字,单个汉字;无目标字时为空字符串',
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        char: { type: 'string', description: '单个汉字' },
+        confidence: { type: 'number', description: '0 到 1,该字是目标字的可能性' },
       },
-      confidence: { type: 'number', description: '0 到 1,该字是目标字的可能性' },
-      candidates: {
-        type: 'array',
-        items: { type: 'string' },
-        description: '其它同音/近音的可能字,按可能性排序,最多 5 个',
-      },
+      required: ['char', 'confidence'],
+      additionalProperties: false,
     },
-    required: ['char', 'confidence', 'candidates'],
-    additionalProperties: false,
   },
 }
+
 
 interface ExtractRequest {
   text: string
@@ -68,18 +63,14 @@ interface ExtractRequest {
 }
 
 interface ExtractResponse {
-  char: string | null
-  /** 0-1; null when the LLM was not reached */
-  confidence: number | null
-  /** other plausible characters, for tap-to-correct */
-  candidates: string[]
+  candidates: Array<{ char: string; confidence: number | null }>
   source: 'llm' | 'rule'
 }
 
 const CJK = /[一-鿿]/
 
 function empty(source: 'llm' | 'rule'): ExtractResponse {
-  return { char: null, confidence: null, candidates: [], source }
+  return { candidates: [], source }
 }
 
 function inputCandidates(text: string): string[] {
@@ -89,7 +80,7 @@ function inputCandidates(text: string): string[] {
 interface ParsedExtraction {
   char?: string | null
   confidence?: number
-  candidates?: string[]
+  candidates?: Array<{ char?: string; confidence?: number }>
 }
 
 function parseTextExtraction(text: string): ParsedExtraction | null {
@@ -154,23 +145,35 @@ export async function POST(req: NextRequest) {
     // Prefer the structured tool result; reasoning mode may return text JSON instead.
     const call = response.output.find((o) => o.type === 'function_call')
     const parsed = call
-      ? (JSON.parse(call.arguments) as ParsedExtraction)
+      ? (JSON.parse(call.arguments) as ParsedExtraction | Array<{ char?: string; confidence?: number }>)
       : parseTextExtraction(response.output_text)
 
-    if (!parsed) {
-      console.error('[extract-char] no structured extraction in output:', response.output.map((o) => o.type))
-      return NextResponse.json(empty('llm'))
+    const candidates = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.candidates)
+        ? parsed.candidates
+        : parsed?.char
+          ? [{ char: parsed.char, confidence: parsed.confidence }]
+          : []
+    const validCandidates = candidates
+      .filter((candidate) => typeof candidate?.char === 'string' && CJK.test(candidate.char))
+      .map((candidate) => ({
+        char: candidate.char!,
+        confidence: typeof candidate.confidence === 'number' ? candidate.confidence : null,
+      }))
+      .filter((candidate, index, all) => all.findIndex((item) => item.char === candidate.char) === index)
+      .slice(0, 5)
+
+    if (!validCandidates.length) {
+      const fallbackCandidates = inputCandidates(text).map((char) => ({ char, confidence: null }))
+      return NextResponse.json<ExtractResponse>({
+        candidates: fallbackCandidates,
+        source: 'llm',
+      })
     }
 
-    const char = typeof parsed.char === 'string' && CJK.test(parsed.char) ? parsed.char : null
-    const candidates = Array.isArray(parsed.candidates)
-      ? parsed.candidates.filter((c) => typeof c === 'string' && CJK.test(c) && c !== char).slice(0, 5)
-      : char ? [] : inputCandidates(text)
-
     return NextResponse.json<ExtractResponse>({
-      char,
-      confidence: typeof parsed.confidence === 'number' ? parsed.confidence : null,
-      candidates,
+      candidates: validCandidates,
       source: 'llm',
     })
   } catch (err) {
