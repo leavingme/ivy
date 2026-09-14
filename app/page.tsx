@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { BackgroundDots } from '@/components/BackgroundDots'
+import { CharacterInput } from '@/components/CharacterInput'
 import { StrokeWriter } from '@/components/StrokeWriter'
 import { VoiceButton } from '@/components/VoiceButton'
 
@@ -82,13 +83,8 @@ export default async function Page({ searchParams }: PageProps) {
           </ol>
         </details>
 
-        {/* Try-it link */}
-        <Link
-          href="/?q=愁"
-          className="text-xs text-muted/60 underline-offset-4 hover:text-muted hover:underline"
-        >
-          没有麦克风？点这儿试一下 →
-        </Link>
+        {/* Manual fallback */}
+        <CharacterInput />
       </div>
 
       {/* Footer */}

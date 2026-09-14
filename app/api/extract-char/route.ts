@@ -82,6 +82,10 @@ function empty(source: 'llm' | 'rule'): ExtractResponse {
   return { char: null, confidence: null, candidates: [], source }
 }
 
+function inputCandidates(text: string): string[] {
+  return [...new Set(text.match(/[一-鿿]/g) ?? [])].slice(0, 5)
+}
+
 interface ParsedExtraction {
   char?: string | null
   confidence?: number
@@ -161,7 +165,7 @@ export async function POST(req: NextRequest) {
     const char = typeof parsed.char === 'string' && CJK.test(parsed.char) ? parsed.char : null
     const candidates = Array.isArray(parsed.candidates)
       ? parsed.candidates.filter((c) => typeof c === 'string' && CJK.test(c) && c !== char).slice(0, 5)
-      : []
+      : char ? [] : inputCandidates(text)
 
     return NextResponse.json<ExtractResponse>({
       char,
